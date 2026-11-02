@@ -1,0 +1,21 @@
+{
+  "name": "bingeon",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "aws:login": "aws login --profile hozhuyi.dev",
+    "web:dev": "pnpm -F bingeon-web dev",
+    "web:test": "pnpm -F bingeon-web test",
+    "web:lint": "pnpm -F bingeon-web lint",
+    "web:typecheck": "pnpm -F bingeon-web typecheck",
+    "lambda:test": "cd bingeon-lambda && go test ./...",
+    "lambda:vet": "cd bingeon-lambda && go vet ./...",
+    "infra:test": "pnpm -F bingeon-infra test",
+    "infra:lint": "pnpm -F bingeon-infra lint",
+    "infra:typecheck": "pnpm -F bingeon-infra typecheck",
+    "cdk:diff": "pnpm -F bingeon-infra cdk:diff",
+    "cdk:deploy": "pnpm -F bingeon-infra cdk:deploy",
+    "cdk:gc": "pnpm -F bingeon-infra cdk:gc"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

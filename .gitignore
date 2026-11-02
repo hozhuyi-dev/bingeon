@@ -1,0 +1,25 @@
+# Environment
+.env
+.env.local
+.env.development
+.env.production
+*.local
+
+# TypeScript
+node_modules
+dist
+dist-ssr
+.tanstack
+coverage
+
+# CDK
+bingeon-infra/cdk.out
+bingeon-infra/cdk.out.ci
+bingeon-infra/.cdk.staging
+
+# Go
+bingeon-lambda/bin
+
+# OS / editor
+.DS_Store
+Thumbs.db
