@@ -100,21 +100,33 @@ Stored types change additively only; the first change that can't brings a schema
 
 ### bingeon-web
 
-`src/main.tsx` → `router.tsx` → `src/routes/` (file routes that only read params and render a page).
+`src/main.tsx` → `router.tsx` → `src/routes/` (file routes that only read params, load their page's data and render it).
 
-- `src/features/<feature>/` files are `<kebab-name>.<layer>.ts(x)`; layers in order: `types`, `constant`, `config`, `util`, `form`, `service`, `query` / `mutation`, `hook`, `component`. Pages are `x-page.component.tsx` at the feature root; components reach data only through `query`, `mutation` and `hook`. `types` mirror the slices' views (`domain.go`).
-- `core/` is infrastructure, `components/shared/` shared components by role, `components/ui/` shadcn's, untouched. Neither imports a feature (ESLint).
-- `core/` has two clients: `catalog.client.ts` (canonical query: keys sorted, search words trimmed, lowercased, single-spaced) and `lambda.client.ts`, both throwing `ApiError`.
-- The catalogue's `staleTime` matches its `s-maxage`; the account is read once a session and replaced by each mutation's reply.
+| Route | Page |
+| --- | --- |
+| `/` | The genres as chips at the top, then four shelves (Popular, Now playing and Upcoming in Malaysia, Top rated), each with "See all" |
+| `/browse?list=…` or `?genre=…`, `&page=` | The genre chips (the one showing highlighted), a grid, Previous and Next |
+| `/search?q=…&page=` | The same; searches on Enter, not as you type (each new search is an uncached call) |
+| `/movie/$id` | Details, cast, a "Watch trailer" link to YouTube (no embed), recommended and similar |
+| `/me` | My movies: AI picks ("Make picks", what's left today, why not), then favourites; sign in when signed out |
+| `/privacy` | What is kept, and deleting it; Google's consent screen links here |
+
+- `src/features/<feature>/` files are `<kebab-name>.<layer>.ts(x)`; layers in order: `types`, `constant`, `config`, `util`, `form`, `service`, `query` / `mutation`, `hook`, `component`. Pages are `x-page.component.tsx` at the feature root; components reach data only through `query`, `mutation` and `hook`. `types` mirror the slices' views.
+- `core/` is infrastructure, `components/shared/` shared components by role (the pigeon, messages, movie card, grid, shelf), `components/ui/` shadcn's, untouched. Neither imports a feature (ESLint).
+- `core/` has two clients, both throwing `ApiError`: `catalog/catalog.client.ts` (canonical query: names sorted, page 1 and empty values left out, search trimmed, single-spaced, lowercased) and `lambda/lambda.client.ts`.
+- **Sign-in loads only when needed** (`core/auth/amplify.ts`): Amplify and the AWS SDK are imported when someone signs in, or has tokens stored or is back from Cognito; anonymous browsing never downloads them.
+- The catalogue's `staleTime` matches its `s-maxage`; the account is read once a session and patched by each mutation's reply (`account.util.ts`).
 - The URL holds the state (search, list, genre, page); no Zustand or Zod.
-- A heart tapped signed out signs in, then favourites the movie (history state through the redirect).
-- Loading, empty and error states are the pigeon's drawings; a page's data loads in its route's loader, so nothing jumps.
-- Tokens only in `styles/app.css`. Posters from TMDB's image CDN. The footer has TMDB's logo and notice, as its terms ask.
+- A heart tapped signed out signs in, then returns to the page and favourites the movie (kept in session storage through the redirect). A refused heart says why (`can`) without calling the API.
+- Rows that scroll sideways (shelves, genre chips on a phone) hide the scrollbar (`scrollbar-none`): swiped on a phone, a shelf moved a screenful at a time by its ‹ › on a wider screen.
+- Loading is a skeleton grid; empty, error and not-found are the pigeon with a line of text. A page's data loads in its route's loader, so nothing jumps.
+- The theme follows the device's light or dark setting (`index.html`); no toggle.
+- Tokens only in `styles/app.css`. Posters from TMDB's image CDN. The footer has TMDB's logo (`public/tmdb-logo.svg`) and notice, as its terms ask. The favicon is the pigeon (`public/favicon.svg`).
 
 ## Features and limits
 
 - **Anyone**: Home (Popular, Now playing and Upcoming in Malaysia, `region=MY`, Top rated), lists by genre, search, a movie's page with cast, trailer, similar and recommended.
-- **Signed in**: favourites (a heart on every card), AI picks from them, delete my account.
+- **Signed in**: favourites (a heart on every card), AI picks from them, delete my account (everything kept, then the Cognito user, with its email; the client allows `aws.cognito.signin.user.admin` for that alone).
 
 Expected users: 10 at most. Limits are constants with their reasons, in each slice's `domain.go` or the stacks.
 
@@ -182,7 +194,7 @@ aws lambda delete-function-concurrency --function-name bingeon-<env>-catalog \
 1. ~~Scaffold and tooling~~: done.
 2. ~~Infra and auth~~: done; development deployed. Until phase 3 the functions are stubs: `api` answers with the caller's identity, `catalog` with a 404, and the header shows the sign-in check. `bingeon-ci` is built, deployed with the CI phase.
 3. ~~API~~: done; development deployed. Stores checked against the development table, the catalogue through CloudFront (cache hits), and a real Gemini pick (6 found, ~6 s).
-4. **Web**: catalogue, movie page, search, favourites, picks, account, `/privacy` (what is kept: the Google email in Cognito, favourites and picks in the table, titles sent to Gemini; deleting the account removes it).
+4. ~~Web~~: done; development deployed and tried by hand.
 5. **CI/CD**: workflows, the `production` environment, the first deploy (when asked), then publishing the Google consent screen with the site's URL and `/privacy`.
 
 ## Open questions

@@ -75,7 +75,9 @@ export class Auth extends Construct {
         callbackUrls: callbackUrls,
         defaultRedirectUri: callbackUrls[0],
         flows: { authorizationCodeGrant: true },
-        scopes: [OAuthScope.EMAIL, OAuthScope.OPENID],
+        // COGNITO_ADMIN lets the user delete their own sign-in (deleting
+        // their account), and nothing of anyone else's.
+        scopes: [OAuthScope.EMAIL, OAuthScope.OPENID, OAuthScope.COGNITO_ADMIN],
         logoutUrls: logoutUrls,
       },
       refreshTokenValidity: Duration.days(30),

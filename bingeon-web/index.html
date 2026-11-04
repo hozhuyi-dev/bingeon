@@ -3,22 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Find your next movie: browse, search, keep favourites and get AI picks." />
     <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>bingeon</title>
     <script>
-      // Sets the theme before the first paint, so a dark page never flashes
-      // light. Mirrors the theme feature (same storage key).
+      // Follows the device's light or dark setting, before the first paint so
+      // a dark page never flashes light, and when it changes. shadcn's tokens
+      // switch on the .dark class (styles/app.css).
       (function () {
-        var preference;
-        try {
-          preference = localStorage.getItem("bingeon.theme");
-        } catch (e) {}
-        var dark =
-          preference === "dark" ||
-          (preference !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.classList.toggle("dark", dark);
-        document.documentElement.style.colorScheme = dark ? "dark" : "light";
-        document.querySelector('meta[name="theme-color"]').content = dark ? "#0a0a0a" : "#ffffff";
+        var query = window.matchMedia("(prefers-color-scheme: dark)");
+        function apply() {
+          var root = document.documentElement;
+          root.classList.toggle("dark", query.matches);
+          root.style.colorScheme = query.matches ? "dark" : "light";
+          document.querySelector('meta[name="theme-color"]').content = query.matches ? "#0a0a0a" : "#ffffff";
+        }
+        apply();
+        query.addEventListener("change", apply);
       })();
     </script>
   </head>

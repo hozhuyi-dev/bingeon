@@ -1,5 +1,8 @@
 import { Outlet, createRootRoute } from "@tanstack/react-router";
-import { IdentityCheck } from "~/features/auth/components/identity-check.component";
+import { SiteHeader } from "~/features/shell/components/site-header.component";
+import { SiteFooter } from "~/features/shell/components/site-footer.component";
+import { AfterSignIn } from "~/features/favourites/components/after-sign-in.component";
+import { Toaster } from "~/components/ui/sonner";
 import "~/styles/app.css";
 
 export const Route = createRootRoute({
@@ -8,11 +11,14 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   return (
-    <>
-      <header className="mx-auto flex max-w-(--content-width) justify-end px-(--page-gutter) pt-4">
-        <IdentityCheck />
-      </header>
-      <Outlet />
-    </>
+    <div className="flex min-h-svh flex-col">
+      <SiteHeader />
+      <main className="mx-auto w-full max-w-(--content-width) flex-1 px-(--page-gutter) py-8">
+        <Outlet />
+      </main>
+      <SiteFooter />
+      <AfterSignIn />
+      <Toaster position="bottom-center" />
+    </div>
   );
 }

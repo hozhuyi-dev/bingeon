@@ -83,6 +83,12 @@ describe("auth", () => {
     auth.hasResourceProperties("AWS::Cognito::UserPool", { AdminCreateUserConfig: { AllowAdminCreateUserOnly: true } });
   });
 
+  test("lets a user delete only their own sign-in", () => {
+    auth.hasResourceProperties("AWS::Cognito::UserPoolClient", {
+      AllowedOAuthScopes: ["email", "openid", "aws.cognito.signin.user.admin"],
+    });
+  });
+
   test("asks Google only for the email", () => {
     auth.hasResourceProperties("AWS::Cognito::UserPoolIdentityProvider", {
       ProviderDetails: Match.objectLike({ authorize_scopes: "openid email" }),

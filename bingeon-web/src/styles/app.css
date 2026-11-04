@@ -113,3 +113,12 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* A row that scrolls sideways without showing a scrollbar: swiped on a
+   phone, or moved by its buttons (Shelf). */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

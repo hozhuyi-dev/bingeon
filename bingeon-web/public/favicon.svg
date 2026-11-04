@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- bingeon's pigeon (components/shared/brand/pigeon.component.tsx), its
+       colours fixed here: a favicon can't read app.css. -->
+  <style>
+    .body { fill: #737373; } .neck { fill: #2a8580; } .ink { fill: #0a0a0a; } .legs { stroke: #737373; }
+    @media (prefers-color-scheme: dark) {
+      .body { fill: #a3a3a3; } .neck { fill: #5cc4bd; } .ink { fill: #fafafa; } .legs { stroke: #a3a3a3; }
+    }
+  </style>
+  <path d="M15 41 L3 45 L16 49 Z" class="body" opacity=".7" />
+  <ellipse cx="32" cy="42" rx="19" ry="12" class="body" opacity=".6" />
+  <path d="M20 39 Q34 31 47 40 Q35 47 20 39 Z" class="body" />
+  <path d="M41 29 Q46 35 45 41 L51 39 Q52 32 49 26 Z" class="neck" />
+  <circle cx="47" cy="22" r="8" class="body" opacity=".8" />
+  <circle cx="49.5" cy="20.5" r="1.8" class="ink" />
+  <path d="M54 21 L60 23 L54 25 Z" class="ink" opacity=".75" />
+  <path d="M29 53 L28 60 M36 53 L37 60" stroke-width="2.5" stroke-linecap="round" class="legs" />
+</svg>
