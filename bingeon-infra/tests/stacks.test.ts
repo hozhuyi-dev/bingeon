@@ -148,6 +148,7 @@ describe("api", () => {
         "dynamodb:UpdateItem",
         "dynamodb:DeleteItem",
         "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
       ],
     ]);
     const ssm = JSON.stringify(statements[0]?.Resource);

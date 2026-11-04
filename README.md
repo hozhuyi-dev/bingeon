@@ -16,7 +16,7 @@ Find your next movie: browse and search the TMDB catalogue without signing in; s
 1. **Public and paid by one person, so everything has a ceiling.** Daily caps per user and overall on AI picks (inside Gemini's free tier), caps on favourites, a table inside DynamoDB's free tier, short Lambda timeouts. A capped request is refused with what it hit and when it frees up.
 2. **Browsing never reaches Lambda twice.** The catalogue is the same for everyone, so CloudFront caches it: a page anyone opened in the last hours costs no Lambda or TMDB call. The web asks in one canonical form, and CloudFront keys only on the parameters the catalogue reads.
 3. **A page is one call.** Home, a movie (via TMDB's `append_to_response`) and the user's account each come back whole. Replies are views trimmed to what the web shows.
-4. **A signed-in request touches only the user's own small items.** The table has 5 write units a second, so a user is a small account item plus one item per favourite: a heart writes about 4 units, never a whole list. Read the account, apply the rule in Go, commit if no one else did meanwhile. A mutation replies with what it changed, so the web reads nothing again.
+4. **A signed-in request touches only the user's own small items.** The table has 5 write units a second, so a user is a few small items plus one per favourite: a heart writes about 4 units, never a whole list. Read, apply the rule in Go, write if no one else did meanwhile. A mutation replies with what it changed, so the web reads nothing again.
 5. **No key reaches the browser.** The TMDB token and Gemini key are SSM SecureStrings, read at a cold start.
 6. **The user is who signed the call.** The API takes the Cognito identity of the invocation, never an id in the payload. bingeon stores no email or name, and a user can delete their account.
 7. **No business rule in the web.** The account view carries `can` per action (ok, or why not and when it frees up); the web disables and explains by it.
@@ -28,7 +28,7 @@ Conventions: identifiers say "user"; British spelling (`favourites`); "today" is
 | Folder | What | Stack |
 | --- | --- | --- |
 | `bingeon-web` | The app (SPA) | React 19, Vite, TanStack Router / Query / Form, Tailwind, shadcn/ui, Amplify auth, Vitest |
-| `bingeon-lambda` | Catalogue proxy, signed-in API | Go, DynamoDB (single table), TMDB API v3, Gemini (`google.golang.org/genai`), `pgregory.net/rapid` |
+| `bingeon-lambda` | Catalogue proxy, signed-in API | Go, DynamoDB (single table), TMDB API v3, Gemini (`google.golang.org/genai`) |
 | `bingeon-infra` | AWS resources | CDK (TypeScript) |
 
 - **Anonymous**: `GET /catalog/<action>?…` on the site's CloudFront, whose origin is the `catalog` Lambda's Function URL, which takes only CloudFront's signed requests (OAC).
@@ -39,7 +39,7 @@ Conventions: identifiers say "user"; British spelling (`favourites`); "today" is
 
 ```
 bingeon-infra/   bin/bingeon-infra.ts → lib/{web,auth,data,api}-stack.ts, bin/bingeon-ci.ts → lib/ci-stack.ts, lib/common/, utils/
-bingeon-lambda/  cmd/{catalog,api}/main.go, internal/{app,features,platform,tmdb,gemini,testutil}/
+bingeon-lambda/  cmd/{catalog,api}/main.go, internal/{app,catalog,favourites,picks,account,platform}/
 bingeon-web/     src/main.tsx, src/routes/ (file routes), src/features/<feature>/
 scripts/         changed.mjs (what a PR or deploy touches), web-env.mjs, secrets.mjs, aws.mjs (shared)
 ```
@@ -59,36 +59,42 @@ CloudFront's cache key, and all `catalog` receives, is the query parameters in `
 
 ### bingeon-lambda
 
-Both commands use one router (`{action, payload}` to a `Query` or `Mutation`, `{data}` or `{error}` back, `apperr` codes), wired by `internal/app`.
+Vertical slices: one package per feature, each in four layers, dependencies pointing inward.
+
+| File | Layer | Does |
+| --- | --- | --- |
+| `handler.go` | Transport | Registers the feature's actions; decodes a payload, calls the service, returns its view |
+| `service.go` | Use cases | One method per action: reads, applies the domain's rules, writes, calls TMDB or Gemini, through small interfaces it declares (`Store`, `Movies`, `Picker`) |
+| `store.go` | Repository | The feature's own DynamoDB items, implementing its `Store` |
+| `domain.go` | Core | Types, limits and rules (`Can…` verdicts, the day's counts); no I/O |
+
+| Feature | Actions | Owns |
+| --- | --- | --- |
+| `catalog` | `catalog.home`, `movies.list`, `movies.search`, `movies.get` | Nothing: views over TMDB |
+| `favourites` | `favourites.add`, `favourites.remove` | `FAV#<movieId>` items (title, year and poster read from TMDB) and `FAVOURITES` |
+| `picks` | `picks.make` | `PICKS` and the global `QUOTA#<day>` |
+| `account` | `account.get`, `account.delete` | Nothing: composes `favourites` and `picks` (the only slice importing others) |
+
+`platform/` is what slices share: `router` (`{action, payload}` in, `{data}` or `{error}` out), `apperr` (codes, `Verdict`), `dynamo`, `tmdb`, `gemini`, `ssm`, `user` (the signed-in user in the context), `day` (the Pacific day), `meter` (counts for the log). `internal/app` wires the slices, joining `picks` to `favourites` through an interface; `app/dependencies_test.go` enforces imports, and per file that `domain.go` does no I/O and only `store.go` touches DynamoDB.
 
 - **`cmd/catalog`** maps `GET /catalog/<action>?<query>` to `{action, payload}`. Each action is registered with its TTL (`router.Cached`), replied as `public, max-age=300, s-maxage=<ttl>`; `invalid` and `not_found` are kept a minute, a TMDB failure `no-store`.
 - **`cmd/api`** takes the user from the invocation's Cognito identity (`lambdacontext`), which Lambda sets from the identity-pool credentials that signed the call (confirmed in development), and refuses a call without one.
-- Each logs one `request` line: action, ms, table reads and writes, TMDB and Gemini calls.
+- Each logs one `request` line: action, ms, table read and write units, TMDB and Gemini calls.
 
-**Features** (`internal/features/<feature>/`: `api.go`, the entity file, `actions.go` with each `Can…`):
+**Storage**: one table, no index; each item is plain attributes.
 
-| Feature | Actions | Notes |
-| --- | --- | --- |
-| `catalog` | `catalog.home`, `movies.list`, `movies.search`, `movies.get` | Views over `internal/tmdb`; no table |
-| `account` | `account.get`, `account.delete` | Owns the `Account` item, its view and every limit (`account/limits.go`) |
-| `favourites` | `favourites.add`, `favourites.remove` | Takes a movie id; the API reads its title, year and poster from TMDB and keeps them in its own item |
-| `picks` | `picks.make` | Gemini over the favourites, each title found in TMDB |
+| PK | SK | Owner | Holds |
+| --- | --- | --- | --- |
+| `USER#<identityId>` | `FAVOURITES` | favourites | Count, the day and its changes, `version` |
+| `USER#<identityId>` | `FAV#<movieId>` | favourites | Title, year, poster, added (~150 B) |
+| `USER#<identityId>` | `PICKS` | picks | The day and its picks made, the last picks with reasons, `version` (~2 KB) |
+| `QUOTA#<yyyy-mm-dd>` | `GEMINI` | picks | The day's Gemini calls; `expires` two days on |
 
-`favourites` and `picks` change a user's items only through `account.Change(ctx, id, fn)`: read the account, apply, commit with it at its version, else again. `app/dependencies_test.go` enforces imports.
+A change reads its item consistently, applies the domain's rule, and writes it back on condition its `version` hasn't moved, else tries again (three times). A heart is one transaction (the favourite and `FAVOURITES`, about 4 write units). `account.get` queries the user's `FAV#` items (500 ≈ 75 KB ≈ 10 read units, eventually consistent, once a session) and gets the three small items. A mutation replies with what it changed and the account's `status` (`can`, today's counts), so the web reads nothing again.
 
-**Storage**: one table, no index.
+**`picks.make`**: check `can.pick`; reserve the user's and the global count in one transaction; ask Gemini for 8 movies like the 100 newest favourites (TMDB's titles, never user text), excluding them and the last picks, each with a reason; find each in TMDB in parallel; keep the first 6 found that aren't favourites as the last picks. On a Gemini or TMDB failure, or none found, the user's count is given back; Gemini's 429 is "busy, try again in a minute".
 
-| PK | SK | Holds |
-| --- | --- | --- |
-| `USER#<identityId>` | `ACCOUNT` | Today's counts, the favourites count, the last picks with reasons, `version` (~2 KB) |
-| `USER#<identityId>` | `FAV#<movieId>` | Title, year, poster, added (~150 B) |
-| `QUOTA#<yyyy-mm-dd>` | `GEMINI` | The day's Gemini calls; `expires` two days on |
-
-`account.get` is the account item and a query of `FAV#` (500 favourites ≈ 75 KB ≈ 10 read units, once a session). `platform/table` has `Get` and `Query` (eventually consistent; a stale read only makes the commit retry) and `Commit`, all or none, of `Put` or `Delete` at a version and `Count` under a cap. A commit is a transaction, which costs double: a heart (the favourite and the account) is about 4 write units. `table.Memory` and DynamoDB pass one contract test.
-
-**`picks.make`**: check `can.pick`; reserve the user's and the global count in one commit; ask Gemini for 6 movies like the 100 newest favourites (TMDB's titles, never user text), excluding them and the last picks, each with a reason; find each in TMDB in parallel; keep them as the last picks. On a Gemini or TMDB failure the user's count is given back; a 429 is "busy, try again in a minute".
-
-**Tests**: `testutil/testapp` is the whole app on the memory table with fake TMDB and Gemini, called with JSON as the web calls it. A small `rapid` test runs several users at random and checks no cap is passed, a refusal changes nothing, and `can` matches the action.
+**Tests**: `domain.go` by plain unit tests; each service with an in-memory store and fake TMDB and Gemini; each `store.go` against a real table when `TABLE_NAME` is set (development's: its own random test user, deleted after); the catalogue's HTTP mapping through the router.
 
 Stored types change additively only; the first change that can't brings a schema version and an upgrade on read.
 
@@ -96,7 +102,7 @@ Stored types change additively only; the first change that can't brings a schema
 
 `src/main.tsx` → `router.tsx` → `src/routes/` (file routes that only read params and render a page).
 
-- `src/features/<feature>/` files are `<kebab-name>.<layer>.ts(x)`; layers in order: `types`, `constant`, `config`, `util`, `form`, `service`, `query` / `mutation`, `hook`, `component`. Pages are `x-page.component.tsx` at the feature root; components reach data only through `query`, `mutation` and `hook`. `types` mirror `api.go` (`AccountView`).
+- `src/features/<feature>/` files are `<kebab-name>.<layer>.ts(x)`; layers in order: `types`, `constant`, `config`, `util`, `form`, `service`, `query` / `mutation`, `hook`, `component`. Pages are `x-page.component.tsx` at the feature root; components reach data only through `query`, `mutation` and `hook`. `types` mirror the slices' views (`domain.go`).
 - `core/` is infrastructure, `components/shared/` shared components by role, `components/ui/` shadcn's, untouched. Neither imports a feature (ESLint).
 - `core/` has two clients: `catalog.client.ts` (canonical query: keys sorted, search words trimmed, lowercased, single-spaced) and `lambda.client.ts`, both throwing `ApiError`.
 - The catalogue's `staleTime` matches its `s-maxage`; the account is read once a session and replaced by each mutation's reply.
@@ -110,7 +116,7 @@ Stored types change additively only; the first change that can't brings a schema
 - **Anyone**: Home (Popular, Now playing and Upcoming in Malaysia, `region=MY`, Top rated), lists by genre, search, a movie's page with cast, trailer, similar and recommended.
 - **Signed in**: favourites (a heart on every card), AI picks from them, delete my account.
 
-Expected users: 10 at most. Limits are constants with their reasons, in `account/limits.go` or the stacks.
+Expected users: 10 at most. Limits are constants with their reasons, in each slice's `domain.go` or the stacks.
 
 | Limit | Value | Why |
 | --- | --- | --- |
@@ -175,7 +181,7 @@ aws lambda delete-function-concurrency --function-name bingeon-<env>-catalog \
 
 1. ~~Scaffold and tooling~~: done.
 2. ~~Infra and auth~~: done; development deployed. Until phase 3 the functions are stubs: `api` answers with the caller's identity, `catalog` with a 404, and the header shows the sign-in check. `bingeon-ci` is built, deployed with the CI phase.
-3. **API**: router, table, `tmdb`, `gemini`, the features and limits, with tests.
+3. ~~API~~: done; development deployed. Stores checked against the development table, the catalogue through CloudFront (cache hits), and a real Gemini pick (6 found, ~6 s).
 4. **Web**: catalogue, movie page, search, favourites, picks, account, `/privacy` (what is kept: the Google email in Cognito, favourites and picks in the table, titles sent to Gemini; deleting the account removes it).
 5. **CI/CD**: workflows, the `production` environment, the first deploy (when asked), then publishing the Google consent screen with the site's URL and `/privacy`.
 

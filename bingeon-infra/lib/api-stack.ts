@@ -46,7 +46,8 @@ export class ApiStack extends cdk.Stack {
     });
 
     // Items and queries (a user's favourites), never a scan. A transaction
-    // is checked against each of its items' actions.
+    // is checked against each of its items' actions; deleting an account
+    // deletes its items in batches.
     table.grant(
       this.api.function,
       "dynamodb:GetItem",
@@ -55,6 +56,7 @@ export class ApiStack extends cdk.Stack {
       "dynamodb:UpdateItem",
       "dynamodb:DeleteItem",
       "dynamodb:ConditionCheckItem",
+      "dynamodb:BatchWriteItem",
     );
 
     // The browser invokes the function directly with identity-pool

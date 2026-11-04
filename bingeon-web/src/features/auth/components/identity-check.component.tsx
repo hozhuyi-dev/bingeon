@@ -21,7 +21,7 @@ export function IdentityCheck() {
         <>
           <span>{auth.data.email}</span>
           <span className="text-muted-foreground">
-            {whoAmI.isPending ? "Asking the API…" : whoAmI.isError ? whoAmI.error.message : `API user: ${whoAmI.data.user}`}
+            {whoAmI.isPending ? "Asking the API…" : whoAmI.isError ? whoAmI.error.message : `API: ${whoAmI.data.favourites.length} favourites, ${whoAmI.data.today.picksLeft} picks left today`}
           </span>
           <button type="button" className="underline" onClick={() => signOut.mutate()}>
             Sign out

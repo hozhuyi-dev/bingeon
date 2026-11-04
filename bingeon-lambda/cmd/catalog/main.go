@@ -1,28 +1,25 @@
-// Command catalog serves the read-only movie catalogue to anyone, behind
-// CloudFront.
-//
-// For now it answers every path as an unknown action, to check CloudFront
-// reaches it; the API phase replaces it with the router.
+// Command catalog serves the movie catalogue to anyone, behind CloudFront:
+// GET /catalog/<action>?<query> (see router.FunctionURL). It reads the
+// TMDB token once, at a cold start, and nothing else.
 package main
 
 import (
 	"context"
+	"log"
 
-	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+
+	"bingeon-lambda/internal/app"
+	"bingeon-lambda/internal/platform/ssm"
+	"bingeon-lambda/internal/platform/tmdb"
 )
 
-func handle(_ context.Context, _ events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
-	return events.LambdaFunctionURLResponse{
-		StatusCode: 404,
-		Headers: map[string]string{
-			"Content-Type":  "application/json",
-			"Cache-Control": "public, max-age=60, s-maxage=60",
-		},
-		Body: `{"error":{"code":"not_found","message":"No such catalogue action."}}`,
-	}, nil
-}
-
 func main() {
-	lambda.Start(handle)
+	token, err := ssm.Secret(context.Background(), "TMDB_TOKEN_PARAM")
+	if err != nil {
+		log.Fatal(err)
+	}
+	r := app.Catalog(tmdb.New(token))
+	r.LogRequests = true
+	lambda.Start(r.FunctionURL("/catalog"))
 }

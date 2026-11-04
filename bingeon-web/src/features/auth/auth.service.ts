@@ -11,8 +11,8 @@ export const AuthService = {
     return { status: "signed-in", email: typeof email === "string" ? email : undefined };
   },
 
-  /** Who the API says the caller is: the infra phase's check, until the account exists. */
-  whoAmI: () => invoke<{ user: string }>("account.get"),
+  /** The account as the API has it: the sign-in check's, until the web phase's account page. */
+  whoAmI: () => invoke<{ favourites: Array<unknown>; today: { picksLeft: number } }>("account.get"),
 
   signIn: () => signInWithRedirect({ provider: "Google" }),
 
