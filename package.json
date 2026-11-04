@@ -4,18 +4,24 @@
   "private": true,
   "scripts": {
     "aws:login": "aws login --profile hozhuyi.dev",
+    "secrets:set": "node scripts/secrets.mjs",
     "web:dev": "pnpm -F bingeon-web dev",
+    "web:env": "node scripts/web-env.mjs",
     "web:test": "pnpm -F bingeon-web test",
     "web:lint": "pnpm -F bingeon-web lint",
     "web:typecheck": "pnpm -F bingeon-web typecheck",
     "lambda:test": "cd bingeon-lambda && go test ./...",
     "lambda:vet": "cd bingeon-lambda && go vet ./...",
+    "lambda:deploy": "pnpm -F bingeon-infra cdk:hotswap",
     "infra:test": "pnpm -F bingeon-infra test",
     "infra:lint": "pnpm -F bingeon-infra lint",
     "infra:typecheck": "pnpm -F bingeon-infra typecheck",
     "cdk:diff": "pnpm -F bingeon-infra cdk:diff",
     "cdk:deploy": "pnpm -F bingeon-infra cdk:deploy",
-    "cdk:gc": "pnpm -F bingeon-infra cdk:gc"
+    "cdk:gc": "pnpm -F bingeon-infra cdk:gc",
+    "ci:diff": "pnpm -F bingeon-infra ci:diff",
+    "ci:deploy": "pnpm -F bingeon-infra ci:deploy",
+    "dev:deploy": "pnpm cdk:deploy && pnpm web:env && pnpm cdk:gc"
   },
   "packageManager": "pnpm@10.33.0"
 }
