@@ -25,6 +25,7 @@ export function GenreChips({ genres, active }: GenreChipsProps) {
           size="sm"
           className="shrink-0 rounded-full"
           aria-current={genre.id === active ? "page" : undefined}
+          nativeButton={false}
           render={<Link to="/browse" search={{ genre: genre.id }} />}
         >
           {genre.name}

@@ -21,7 +21,7 @@ export function SiteHeader() {
           <SearchBox />
         </div>
         <nav className="flex shrink-0 items-center gap-1">
-          <Button variant="ghost" render={<Link to="/me" activeProps={{ className: "bg-muted" }} />}>
+          <Button variant="ghost" nativeButton={false} render={<Link to="/me" activeProps={{ className: "bg-muted" }} />}>
             My movies
           </Button>
           {auth.data?.status === "signed-in" ? (

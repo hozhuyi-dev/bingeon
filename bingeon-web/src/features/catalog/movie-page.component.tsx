@@ -45,7 +45,7 @@ export function MoviePage({ id }: { id: number }) {
             {movie.genres.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {movie.genres.map((genre) => (
-                  <Button key={genre.id} variant="outline" size="xs" render={<Link to="/browse" search={{ genre: genre.id }} />}>
+                  <Button key={genre.id} variant="outline" size="xs" nativeButton={false} render={<Link to="/browse" search={{ genre: genre.id }} />}>
                     {genre.name}
                   </Button>
                 ))}
@@ -63,6 +63,7 @@ export function MoviePage({ id }: { id: number }) {
               {movie.trailer && (
                 <Button
                   variant="outline"
+                  nativeButton={false}
                   render={<a href={`https://www.youtube.com/watch?v=${movie.trailer}`} target="_blank" rel="noopener noreferrer" />}
                 >
                   <PlayIcon /> Watch trailer

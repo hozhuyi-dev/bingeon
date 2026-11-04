@@ -1,15 +1,35 @@
 # bingeon
 
-Find your next movie: browse and search the TMDB catalogue without signing in; sign in with Google to keep favourites and get AI picks from them.
+Find your next movie: browse and search the TMDB catalogue without signing in, or sign in with Google to keep favourites and get AI picks made from them. (binge + pigeon.)
 
-<!--
-  Visitor section, once live: pitch, screenshots, highlights, and the
-  "Viewing only. All rights reserved." notice. Then:
-  "The rest of this README is the design, written for whoever works on it next."
--->
+Built by one developer as a portfolio piece, and run inside AWS's and Google's free tiers: a React SPA on CloudFront, a Go API on Lambda and DynamoDB, Gemini for the picks, deployed by CDK and GitHub Actions.
 
-> [!NOTE]
-> **Being built**, in [phases](#build-phases).
+**Live: [d2100dyslcubze.cloudfront.net](https://d2100dyslcubze.cloudfront.net)**
+
+<p align="center">
+  <img src="docs/images/home.png" alt="Home: the genres as chips, then shelves of Popular and Now playing in Malaysia, each poster with a heart" width="820">
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/images/movie.png" alt="The Dark Knight's page: poster, facts, genres, overview, director, a filled heart and Watch trailer, then the cast" width="400"><br>A movie's page</td>
+    <td align="center"><img src="docs/images/picks.png" alt="My movies: six AI picks, each with why, made from three Batman favourites, and how many picks are left today" width="400"><br>AI picks from favourites</td>
+  </tr>
+</table>
+
+### Highlights
+
+- **Browsing is cached at the edge.** The catalogue Lambda sits behind CloudFront, as a function URL that answers only CloudFront's signed requests. The web asks in one canonical form and CloudFront keys only on the parameters the catalogue reads ([site.ts](bingeon-infra/lib/common/web/site.ts)), so a page anyone opened in the last hours costs no Lambda or TMDB call.
+- **Every limit is the API's, inside free tiers.** DynamoDB runs at 5 provisioned units a second and Gemini at its free 500 calls a day. A pick reserves the user's and everyone's count in one transaction before Gemini is called, and gives the user's back if it fails ([picks/service.go](bingeon-lambda/internal/picks/service.go)). Each view carries `can`, so the web never guesses a rule.
+- **The user is who signed the call.** The browser invokes the API Lambda directly with Cognito identity-pool credentials, and the API takes the user from the invocation, never from the payload ([cmd/api](bingeon-lambda/cmd/api/main.go)).
+- **Vertical slices, with their layers enforced.** Each feature is handler, service, store and domain; a test fails if a domain does I/O, anything but a store touches DynamoDB, or a slice reaches into another ([dependencies_test.go](bingeon-lambda/internal/app/dependencies_test.go)).
+- **AI picks are checked against the catalogue.** Gemini answers in a JSON schema, and each suggestion is looked up in TMDB: only real movies that aren't already favourites are kept, each with why.
+- **No key leaves AWS.** The TMDB and Gemini keys are SSM SecureStrings read at a cold start; deploys use a GitHub OIDC role that only production's GitHub environment can assume ([github-deploy-role.ts](bingeon-infra/lib/common/ci/github-deploy-role.ts)).
+
+> [!IMPORTANT]
+> **Viewing only. All rights reserved.** This code is public to be read as a portfolio piece. No licence is granted: you may not use, copy, modify, distribute or deploy it, in whole or in part, without written permission.
+
+The rest of this README is the design, written for whoever works on it next.
 
 ## Design principles
 
@@ -18,7 +38,7 @@ Find your next movie: browse and search the TMDB catalogue without signing in; s
 3. **A page is one call.** Home, a movie (via TMDB's `append_to_response`) and the user's account each come back whole. Replies are views trimmed to what the web shows.
 4. **A signed-in request touches only the user's own small items.** The table has 5 write units a second, so a user is a few small items plus one per favourite: a heart writes about 4 units, never a whole list. Read, apply the rule in Go, write if no one else did meanwhile. A mutation replies with what it changed, so the web reads nothing again.
 5. **No key reaches the browser.** The TMDB token and Gemini key are SSM SecureStrings, read at a cold start.
-6. **The user is who signed the call.** The API takes the Cognito identity of the invocation, never an id in the payload. bingeon stores no email or name, and a user can delete their account.
+6. **The user is who signed the call.** The API takes the Cognito identity of the invocation, never an id in the payload. The table keeps no email or name (Cognito keeps the email, for signing in), and a user can delete it all.
 7. **No business rule in the web.** The account view carries `can` per action (ok, or why not and when it frees up); the web disables and explains by it.
 
 Conventions: identifiers say "user"; British spelling (`favourites`); "today" is the Pacific-time day, when Gemini's quota resets, shown to the user in their own time.
@@ -114,6 +134,7 @@ Stored types change additively only; the first change that can't brings a schema
 
 - `src/features/<feature>/` files are `<kebab-name>.<layer>.ts(x)`; layers in order: `types`, `constant`, `config`, `util`, `form`, `service`, `query` / `mutation`, `hook`, `component`. Pages are `x-page.component.tsx` at the feature root; components reach data only through `query`, `mutation` and `hook`. `types` mirror the slices' views.
 - `core/` is infrastructure, `components/shared/` shared components by role (the pigeon, messages, movie card, grid, shelf), `components/ui/` shadcn's, untouched. Neither imports a feature (ESLint).
+- shadcn's components are Base UI's: a `Button` that renders a link (`render={<Link />}` or `<a>`) sets `nativeButton={false}`, or Base UI warns that it lost a button's semantics.
 - `core/` has two clients, both throwing `ApiError`: `catalog/catalog.client.ts` (canonical query: names sorted, page 1 and empty values left out, search trimmed, single-spaced, lowercased) and `lambda/lambda.client.ts`.
 - **Sign-in loads only when needed** (`core/auth/amplify.ts`): Amplify and the AWS SDK are imported when someone signs in, or has tokens stored or is back from Cognito; anonymous browsing never downloads them.
 - The catalogue's `staleTime` matches its `s-maxage`; the account is read once a session and patched by each mutation's reply (`account.util.ts`).
@@ -149,7 +170,7 @@ Cache (`s-maxage`): home and lists 6 hours, search and a movie 24 hours; browser
 | Environment | Deployed by | Web |
 | --- | --- | --- |
 | `development` | `pnpm dev:deploy` from a laptop | `pnpm web:dev`, http://localhost:4200 |
-| `production` | GitHub Actions, on push to `main` | its CloudFront URL |
+| `production` | GitHub Actions, on push to `main` | https://d2100dyslcubze.cloudfront.net |
 
 `main` is production. AWS profile `hozhuyi.dev`, `ap-southeast-1`; GitHub `hozhuyi-dev/bingeon`. Cost alerts are account-wide, not here.
 
@@ -169,7 +190,7 @@ Cache (`s-maxage`): home and lists 6 hours, search and a movie 24 hours; browser
 
 Node 24+, pnpm 10, Go (see `go.mod`), the AWS CLI. Then `pnpm install`, and once per environment:
 
-1. **Google OAuth client** `bingeon-<env>`, Web application, in the Google Cloud project `bingeon` (no billing; its consent screen is set up once and asks only for email). It stays in "Testing", where only its test users can sign in, until production: publishing needs a homepage and privacy policy URL, the production site and its `/privacy` page. Authorised redirect URI: `https://bingeon-<env>.auth.ap-southeast-1.amazoncognito.com/oauth2/idpresponse`.
+1. **Google OAuth client** `bingeon-<env>`, Web application, in the Google Cloud project `bingeon` (no billing; one consent screen for both, asking only for email). Published, anyone can sign in to either; in "Testing", only its test users. Authorised redirect URI: `https://bingeon-<env>.auth.ap-southeast-1.amazoncognito.com/oauth2/idpresponse`.
 2. **`bingeon-infra/.env.<env>`** from [.env.example](bingeon-infra/.env.example), with that client.
 3. **Keys**: a TMDB API read access token (themoviedb.org → Settings → API) and a Gemini API key from the `bingeon` project (aistudio.google.com); one of each may serve both environments. Then `pnpm secrets:set <env>`.
 4. **Development**: `pnpm dev:deploy` (all stacks, then `web:env` writes `bingeon-web/.env.development`), then `pnpm web:dev`.
@@ -201,14 +222,6 @@ aws lambda put-function-concurrency --function-name bingeon-<env>-catalog \
 aws lambda delete-function-concurrency --function-name bingeon-<env>-catalog \
   --profile hozhuyi.dev --region ap-southeast-1   # back on
 ```
-
-## Build phases
-
-1. ~~Scaffold and tooling~~: done.
-2. ~~Infra and auth~~: done; development deployed. Until phase 3 the functions are stubs: `api` answers with the caller's identity, `catalog` with a 404, and the header shows the sign-in check. `bingeon-ci` is built, deployed with the CI phase.
-3. ~~API~~: done; development deployed. Stores checked against the development table, the catalogue through CloudFront (cache hits), and a real Gemini pick (6 found, ~6 s).
-4. ~~Web~~: done; development deployed and tried by hand.
-5. **CI/CD**: workflows built; next, production's one-time setup (above), the first deploy (when asked), then publishing the consent screen.
 
 ## Open questions
 

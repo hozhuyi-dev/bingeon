@@ -16,6 +16,7 @@ export function Pager({ page, totalPages }: PagerProps) {
       <Button
         variant="outline"
         disabled={page <= 1}
+        nativeButton={page <= 1}
         render={page > 1 ? <Link to="." search={(prev) => ({ ...prev, page: to(page - 1) })} /> : undefined}
       >
         <ChevronLeftIcon /> Previous
@@ -26,6 +27,7 @@ export function Pager({ page, totalPages }: PagerProps) {
       <Button
         variant="outline"
         disabled={page >= totalPages}
+        nativeButton={page >= totalPages}
         render={page < totalPages ? <Link to="." search={(prev) => ({ ...prev, page: page + 1 })} /> : undefined}
       >
         Next <ChevronRightIcon />
