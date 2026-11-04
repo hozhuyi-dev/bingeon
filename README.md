@@ -42,6 +42,7 @@ bingeon-infra/   bin/bingeon-infra.ts → lib/{web,auth,data,api}-stack.ts, bin/
 bingeon-lambda/  cmd/{catalog,api}/main.go, internal/{app,catalog,favourites,picks,account,platform}/
 bingeon-web/     src/main.tsx, src/routes/ (file routes), src/features/<feature>/
 scripts/         changed.mjs (what a PR or deploy touches), web-env.mjs, secrets.mjs, aws.mjs (shared)
+.github/         workflows/{ci,deploy}.yml
 ```
 
 ### bingeon-infra
@@ -150,7 +151,19 @@ Cache (`s-maxage`): home and lists 6 hours, search and a movie 24 hours; browser
 | `development` | `pnpm dev:deploy` from a laptop | `pnpm web:dev`, http://localhost:4200 |
 | `production` | GitHub Actions, on push to `main` | its CloudFront URL |
 
-`main` is production; pull requests are checked by CI. AWS profile `hozhuyi.dev`, `ap-southeast-1`; GitHub `hozhuyi-dev/bingeon`. Cost alerts are account-wide, not here. Keys are never in GitHub or a build: `pnpm secrets:set <env>` puts them in SSM at `/bingeon/<env>/{tmdb-token,gemini-key}`, so they aren't in a template, a Lambda's configuration or a workflow's reach, and both environments get them the same way. A web deploy invalidates only unhashed files, never `/catalog/*`.
+`main` is production. AWS profile `hozhuyi.dev`, `ap-southeast-1`; GitHub `hozhuyi-dev/bingeon`. Cost alerts are account-wide, not here.
+
+- **[ci.yml](.github/workflows/ci.yml)**, on pull requests: typecheck, lint, tests (Go with `-race`), production builds and a `cdk synth`, for only the parts the change touches (`scripts/changed.mjs`).
+- **[deploy.yml](.github/workflows/deploy.yml)**, on push to `main` (or by hand), in the `production` GitHub environment: what changed since the last successful deploy; the stacks (`cdk deploy`, then `cdk gc`), then the web (`web-env.mjs` from the outputs, build, upload: `assets/` cached for good, the rest revalidated, `index.html` last, old files deleted). It invalidates only the unhashed files, never `/catalog/*`.
+- **Keys**: the TMDB token and Gemini key are never in GitHub or a build: `pnpm secrets:set <env>` puts them in SSM at `/bingeon/<env>/{tmdb-token,gemini-key}`. The Google client secret is the `production` environment's one secret, as `cdk synth` writes it into Cognito's template.
+
+**Production, once**:
+
+1. `pnpm ci:deploy`: `bingeon-ci`, the role GitHub deploys with (its ARN is the stack's output).
+2. In the `bingeon` Google project, a `bingeon-production` OAuth client, redirect URI `https://bingeon-production.auth.ap-southeast-1.amazoncognito.com/oauth2/idpresponse`.
+3. GitHub → Settings → Environments → `production`: deployment branches `main` only; variables `AWS_ACCOUNT_ID`, `AWS_ROLE_ARN`, `GOOGLE_CLIENT_ID`; secret `GOOGLE_CLIENT_SECRET`.
+4. `pnpm secrets:set production` (the same TMDB token and Gemini key serve).
+5. Push to `main`, or run Deploy by hand. Then publish Google's consent screen (Audience → Publish app), its homepage the site's URL and its privacy policy the site's `/privacy`.
 
 ## Development setup
 
@@ -195,7 +208,7 @@ aws lambda delete-function-concurrency --function-name bingeon-<env>-catalog \
 2. ~~Infra and auth~~: done; development deployed. Until phase 3 the functions are stubs: `api` answers with the caller's identity, `catalog` with a 404, and the header shows the sign-in check. `bingeon-ci` is built, deployed with the CI phase.
 3. ~~API~~: done; development deployed. Stores checked against the development table, the catalogue through CloudFront (cache hits), and a real Gemini pick (6 found, ~6 s).
 4. ~~Web~~: done; development deployed and tried by hand.
-5. **CI/CD**: workflows, the `production` environment, the first deploy (when asked), then publishing the Google consent screen with the site's URL and `/privacy`.
+5. **CI/CD**: workflows built; next, production's one-time setup (above), the first deploy (when asked), then publishing the consent screen.
 
 ## Open questions
 

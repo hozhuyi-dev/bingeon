@@ -1,0 +1,194 @@
+name: Deploy
+
+# main is production. Development deploys from a laptop (`pnpm dev:deploy`).
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Never cancel a deploy halfway: an interrupted CloudFormation update has to
+# roll back before the next one can start. A push and a run by hand queue.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# What isn't secret is here or a variable of the `production` GitHub
+# environment (AWS_ACCOUNT_ID, AWS_ROLE_ARN, GOOGLE_CLIENT_ID); its one secret
+# is GOOGLE_CLIENT_SECRET, which Cognito's template needs. The TMDB token and
+# Gemini key are never here: the Lambdas read them from SSM.
+env:
+  ENVIRONMENT: production
+  PROJECT_NAME: bingeon
+  AWS_REGION: ap-southeast-1
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # What changed since the last successful deploy, so only those parts
+  # deploy: a change to the web alone skips the stacks. Compared with the
+  # last successful run, not the previous push, so what a failed deploy left
+  # out deploys with the next one. A run by hand deploys everything.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      web: ${{ steps.changed.outputs.web }}
+      lambda: ${{ steps.changed.outputs.lambda }}
+      infra: ${{ steps.changed.outputs.infra }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Find the last deploy
+        id: last
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml --branch main \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // ""')
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: What changed
+        id: changed
+        run: node scripts/changed.mjs "${{ steps.last.outputs.sha }}"
+
+  # Infra first: the web build reads its configuration from the stack outputs,
+  # so it must not run against outputs from the previous deploy. The stacks
+  # carry the Lambdas, so a change to them deploys here too.
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || needs.changes.outputs.lambda == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: bingeon-lambda/go.mod
+          cache-dependency-path: bingeon-lambda/go.sum
+
+      - name: Install dependencies
+        run: pnpm -F bingeon-infra install --frozen-lockfile
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Production signs in only at its own site's URL, so no CALLBACK_URLS.
+      - name: Deploy stacks
+        run: pnpm -F bingeon-infra cdk:deploy:ci
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+
+      # Every deploy uploads new Lambda builds to the CDK assets bucket, which
+      # keeps the old ones until collected: delete those no stack in the
+      # account uses (bizzy's too; ones under a day old stay). Cleanup only,
+      # so it never fails a deploy. --app reads the assembly the deploy just
+      # wrote, rather than running bin/ again without the deploy's variables.
+      - name: Delete unused Lambda builds
+        continue-on-error: true
+        run: pnpm -F bingeon-infra exec cdk gc "aws://${AWS_ACCOUNT_ID}/${AWS_REGION}" --app cdk.out --unstable=gc --type=s3 --confirm=false
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+
+  # After infra when it deploys (its outputs may have changed), and on its
+  # own when only the web did, reading the outputs already there.
+  web:
+    needs: [changes, infra]
+    if: >-
+      !cancelled()
+      && (needs.changes.outputs.web == 'true' || needs.changes.outputs.infra == 'true')
+      && (needs.infra.result == 'success' || needs.infra.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm -F bingeon-web install --frozen-lockfile
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Same script as local development, so CI can't drift from it.
+      - name: Write web env from stack outputs
+        run: node scripts/web-env.mjs
+
+      - name: Build
+        run: pnpm -F bingeon-web build:production
+
+      - name: Upload to S3
+        run: |
+          set -euo pipefail
+
+          output() {
+            aws cloudformation describe-stacks --stack-name "$PROJECT_NAME-$ENVIRONMENT-web" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+          SITE_BUCKET=$(output SiteBucketName)
+          echo "DISTRIBUTION_ID=$(output DistributionId)" >> "$GITHUB_ENV"
+
+          DIST=bingeon-web/dist
+          # Vite content-hashes everything under assets/, so cache it forever.
+          aws s3 sync "$DIST" "s3://$SITE_BUCKET" \
+            --cache-control "public,max-age=31536000,immutable" \
+            --exclude "*" --include "assets/*"
+          # Un-hashed public files (favicon, TMDB's logo) revalidate.
+          aws s3 sync "$DIST" "s3://$SITE_BUCKET" \
+            --cache-control "public,max-age=0,must-revalidate" \
+            --exclude "assets/*" --exclude "index.html"
+          # Entry document once everything it references is in place.
+          aws s3 cp "$DIST/index.html" "s3://$SITE_BUCKET/index.html" --cache-control "no-cache"
+          # Then drop the previous builds' files, which nothing references
+          # any more (each build names its assets anew, so they pile up).
+          aws s3 sync "$DIST" "s3://$SITE_BUCKET" --delete --size-only
+
+      # Only the un-hashed files: never /catalog/*, which stays cached for
+      # everyone, nor assets/, whose names are new. Every route is served
+      # /index.html (the site's SPA routing), so that one path covers them.
+      - name: Invalidate CloudFront
+        run: |
+          set -euo pipefail
+          mapfile -t paths < <(cd bingeon-web/dist && find . -maxdepth 1 -type f | sed 's|^\.||')
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" \
+            --paths "/" "${paths[@]}" > /dev/null

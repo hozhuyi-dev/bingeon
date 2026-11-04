@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # What the pull request changes, so only those parts are checked. A job
+  # skipped by its `if` counts as passed, so required checks don't wait on it.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.changed.outputs.web }}
+      lambda: ${{ steps.changed.outputs.lambda }}
+      infra: ${{ steps.changed.outputs.infra }}
+
+    steps:
+      # The pull request's merge commit, and the base branch it merges into
+      # as its first parent.
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: What changed
+        id: changed
+        run: node scripts/changed.mjs HEAD^1
+
+  lambda:
+    needs: changes
+    if: needs.changes.outputs.lambda == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bingeon-lambda
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: bingeon-lambda/go.mod
+          cache-dependency-path: bingeon-lambda/go.sum
+
+      - name: Format check
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Vet
+        run: go vet ./...
+
+      # The stores' tests run on memory here; against DynamoDB only by hand
+      # (TABLE_NAME), so CI needs no AWS.
+      - name: Test
+        run: go test -race ./...
+
+  # `cdk synth` builds the Lambdas, so a change to them is checked here too.
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || needs.changes.outputs.lambda == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: bingeon-lambda/go.mod
+          cache-dependency-path: bingeon-lambda/go.sum
+
+      - name: Install dependencies
+        run: pnpm -F bingeon-infra install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm -F bingeon-infra typecheck
+
+      - name: Lint
+        run: pnpm -F bingeon-infra lint
+
+      - name: Test
+        run: pnpm -F bingeon-infra test
+
+      - name: Synth
+        run: pnpm -F bingeon-infra cdk:synth --quiet
+        env:
+          ENVIRONMENT: production
+          PROJECT_NAME: bingeon
+          AWS_ACCOUNT_ID: "123456789012"
+          AWS_REGION: ap-southeast-1
+          GOOGLE_CLIENT_ID: placeholder
+          GOOGLE_CLIENT_SECRET: placeholder
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm -F bingeon-web install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm -F bingeon-web typecheck
+
+      - name: Lint
+        run: pnpm -F bingeon-web lint
+
+      - name: Test
+        run: pnpm -F bingeon-web test
+
+      - name: Build
+        run: pnpm -F bingeon-web build:production
